@@ -9,7 +9,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/example/m3u8-proxy/internal/proxy"
+	"github.com/maxieyy/CORS-PROXY-GO/internal/proxy"
 )
 
 func main() {
