@@ -1,0 +1,14 @@
+[build]
+builder = "DOCKERFILE"
+dockerfilePath = "Dockerfile"
+
+[deploy]
+healthcheckPath = "/health"
+healthcheckTimeout = 30
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 10
+
+[variables]
+PROXY_PATH = "/m3u8-proxy"
+ALLOW_PRIVATE_IPS = "false"
+RUST_LOG = "info"
