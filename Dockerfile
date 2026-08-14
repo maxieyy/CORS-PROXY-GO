@@ -13,4 +13,4 @@ ENV PROXY_PATH=/m3u8-proxy
 ENV ALLOW_PRIVATE_IPS=false
 EXPOSE 3000
 USER 65532:65532
-ENTRYPOINT ["/bin/sh", "-c", "exec /usr/local/bin/cors-proxy"]
+ENTRYPOINT ["/bin/sh", "-c", "export LISTEN_ADDR=0.0.0.0:${PORT:-3000}; exec /usr/local/bin/cors-proxy"]
