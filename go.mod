@@ -1,3 +1,3 @@
-module github.com/example/m3u8-proxy
+module github.com/maxieyy/CORS-PROXY-GO
 
 go 1.22
