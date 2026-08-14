@@ -1,0 +1,16 @@
+[package]
+name = "cors-proxy"
+version = "0.1.0"
+edition = "2021"
+description = "Production-oriented HLS HTTP/HTTPS CORS proxy"
+license = "MIT"
+
+[dependencies]
+axum = "0.8"
+http = "1"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "http2", "stream"] }
+serde_json = "1"
+tokio = { version = "1", features = ["full"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+url = "2"

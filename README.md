@@ -1,69 +1,112 @@
-# M3U8 Proxy — Go
+# CORS Proxy — Rust
 
-A small production-oriented HTTP/HTTPS proxy for HLS playlists and media resources. It is designed for VPS deployment and focuses only on proxying: no player, frontend, playground, or unrelated application code.
+A small, production-oriented HTTP/HTTPS proxy for HLS playlists and media resources, built with **Rust + Axum + Tokio + Reqwest**.
 
-## What it does
+The repository is intentionally focused on proxying only: no player, frontend, playground, or unrelated application code.
 
-- Accepts `http://` and `https://` upstream URLs.
-- Fetches `.m3u8`/`.txt` playlists server-side.
-- Rewrites playlist resource URLs so browsers request them through the HTTPS proxy instead of the original HTTP origin.
-- Proxies `.ts`, `.mp4`, `.key`, initialization segments, images, and other HLS resources.
-- Preserves useful response headers and byte-range requests.
-- Supports optional upstream request headers through a JSON query parameter.
-- Includes CORS headers for browser HLS clients such as hls.js.
-- Includes a `/health` endpoint.
-- Uses connection pooling and bounded upstream concurrency.
-- Includes SSRF protection by default: private/special-use upstream IPs are blocked unless explicitly enabled.
-- Builds to a single Go binary with no runtime dependency on Node.js or Python.
+## Features
 
-## Example
+- HTTP and HTTPS upstreams.
+- HLS `.m3u8` playlist fetching and URL rewriting.
+- Relative and absolute segment/resource URL resolution.
+- Rewrites `URI="..."` resources such as `EXT-X-KEY`, `EXT-X-MAP`, `EXT-X-MEDIA`, and iframe resources.
+- Streams `.ts`, `.mp4`, `.key`, initialization segments, images, and other resources without buffering them in memory.
+- HTTP `Range` forwarding for media requests.
+- `Referer` and `Origin` are treated as **upstream HTTP headers**, not target URL parameters.
+- Optional custom upstream headers through JSON.
+- CORS response headers for browser HLS clients such as hls.js.
+- Bounded upstream concurrency.
+- Connection pooling and HTTP/2 support.
+- SSRF protection by default: private, loopback, link-local, multicast, unspecified, and other special-use addresses are blocked.
+- TLS verification is enabled by default.
+- Graceful shutdown and `/health` endpoint.
+- Single native binary or minimal container image.
 
-Raw upstream:
+## Request format
+
+Raw upstream playlist:
 
 ```text
-http://example.com/iptv/MCHUP9AS7DBP5W/7342/index.m3u8
+https://example.com/live/channel/index.m3u8
 ```
 
-Proxy endpoint:
+Proxy:
 
 ```text
-https://proxy.example.com/m3u8-proxy?url=http%3A%2F%2Fexample.com%2Fiptv%2FMCHUP9AS7DBP5W%2F7342%2Findex.m3u8
+https://proxy.example.com/m3u8-proxy?url=https%3A%2F%2Fexample.com%2Flive%2Fchannel%2Findex.m3u8
 ```
 
-The browser communicates only with the HTTPS proxy. The proxy may communicate with an HTTP or HTTPS origin, so an HTTPS page does not directly load an HTTP `.m3u8` and trigger mixed-content blocking.
+With upstream headers:
 
-## Requirements
+```text
+https://proxy.example.com/m3u8-proxy?url=https%3A%2F%2Fexample.com%2Flive%2Fchannel%2Findex.m3u8&referer=https%3A%2F%2Fexample.com%2F&origin=https%3A%2F%2Fexample.com
+```
 
-- Go 1.22 or newer.
-- Linux VPS recommended.
-- Nginx and Let's Encrypt/Certbot recommended for public HTTPS.
+The proxy converts those values into upstream `Referer` and `Origin` headers. They are not appended to the upstream resource URL.
+
+For arbitrary headers, pass a JSON object using the `headers` query parameter, for example:
+
+```json
+{"Authorization":"Bearer token","X-Custom":"value"}
+```
+
+Use URL encoding when constructing the complete request URL.
+
+## Configuration
+
+| Variable | Default | Purpose |
+|---|---:|---|
+| `LISTEN_ADDR` | `0.0.0.0:3000` | Listen address |
+| `PROXY_PATH` | `/m3u8-proxy` | Proxy endpoint |
+| `UPSTREAM_TIMEOUT` | `10` | Seconds to establish/receive upstream response headers |
+| `MAX_PLAYLIST_BYTES` | `4194304` | Maximum playlist size |
+| `MAX_URL_LENGTH` | `8192` | Maximum target URL length |
+| `MAX_HEADER_JSON_LENGTH` | `8192` | Maximum custom-header JSON size |
+| `MAX_CONCURRENT_UPSTREAM` | `256` | Maximum concurrent upstream requests |
+| `USER_AGENT` | `cors-proxy-rust/1.0` | Default upstream User-Agent |
+| `ALLOW_PRIVATE_IPS` | `false` | Explicitly allow private/special-use upstream addresses |
+| `RUST_LOG` | `info` | Log filter |
 
 ## Local development
 
+Requirements: Rust stable toolchain.
+
 ```bash
-go mod tidy
-go run ./cmd/m3u8-proxy
+cargo fmt --check
+cargo check
+cargo run --release
 ```
 
-Test health:
+Health check:
 
 ```bash
 curl http://127.0.0.1:3000/health
 ```
 
-Test a playlist through the proxy:
+Test a playlist:
 
 ```bash
 curl -G 'http://127.0.0.1:3000/m3u8-proxy' \
-  --data-urlencode 'url=http://example.com/iptv/MCHUP9AS7DBP5W/7342/index.m3u8'
+  --data-urlencode 'url=https://example.com/live/channel/index.m3u8'
 ```
 
-## Production
+## Docker
 
-See [`DEPLOYMENT.md`](./DEPLOYMENT.md) for a complete SSH → DNS → Go → systemd → Nginx → SSL deployment.
+```bash
+docker build -t cors-proxy .
+docker run --rm -p 3000:3000 cors-proxy
+```
 
-## Security notes
+## Security
 
-This is an HTTP proxy, which means it must be protected from abuse. Keep `ALLOW_PRIVATE_IPS=false` unless there is a deliberate reason to proxy internal destinations. Do not expose unrestricted proxy access to untrusted users without rate limiting, authentication, or an upstream allowlist appropriate for your application.
+This is an open HTTP proxy unless you add access control at the application or reverse-proxy layer. Do not expose unrestricted proxy access to untrusted users without rate limiting, authentication, or an upstream allowlist appropriate for your deployment.
 
-The optional `headers` parameter is deliberately filtered; hop-by-hop and CORS response-control headers cannot be injected by callers.
+`ALLOW_PRIVATE_IPS=false` should remain enabled unless internal destinations are deliberately required. The proxy validates DNS results before connecting and rejects private and special-use addresses.
+
+Automatic upstream redirects are deliberately not required for the proxy's security model; if redirect following is introduced later, every redirect target must undergo the same URL and DNS validation.
+
+Caller-controlled headers are filtered to prevent overriding hop-by-hop and proxy-controlled headers.
+
+## Production deployment
+
+See [`DEPLOYMENT.md`](./DEPLOYMENT.md) for VPS, systemd, Nginx, TLS, and Docker deployment guidance.
