@@ -13,7 +13,7 @@ use url::Url;
 async fn main() {
     tracing_subscriber::fmt().with_env_filter(env::var("RUST_LOG").unwrap_or_else(|_| "info".into())).init();
     let cfg = Config::from_env();
-    let client = Client::builder().user_agent(cfg.user_agent.clone()).connect_timeout(Duration::from_secs(10)).pool_idle_timeout(Duration::from_secs(30)).http2_adaptive_window(true).build().expect("failed to build HTTP client");
+    let client = Client::builder().user_agent(cfg.user_agent.clone()).connect_timeout(Duration::from_secs(10)).pool_idle_timeout(Duration::from_secs(30)).http2_adaptive_window(true).redirect(reqwest::redirect::Policy::none()).build().expect("failed to build HTTP client");
     let state = AppState { client, semaphore: Arc::new(Semaphore::new(cfg.max_concurrent)), cfg: cfg.clone() };
     let app = Router::new().route("/health", get(health)).route(&cfg.proxy_path, get(proxy).head(proxy).options(options)).with_state(state);
     let addr: SocketAddr = env::var("LISTEN_ADDR").unwrap_or_else(|_| "0.0.0.0:3000".into()).parse().expect("invalid LISTEN_ADDR");
