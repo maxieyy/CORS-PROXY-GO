@@ -37,15 +37,17 @@ struct Config {
     allow_private_ips: bool,
 }
 
-// These are safe browser/media request headers that are useful to preserve
-// when the client talks to a protected HLS origin. We deliberately use an
-// allowlist rather than blindly forwarding every incoming request header.
+// Only these browser/media request headers are copied automatically. This
+// prevents forwarding hop-by-hop, proxy, host, cookie, authorization, and
+// other sensitive headers just because a client happened to send them.
 const SAFE_FORWARD_HEADERS: &[&str] = &[
     "accept",
     "accept-language",
     "cache-control",
     "pragma",
     "user-agent",
+    "origin",
+    "referer",
     "sec-fetch-dest",
     "sec-fetch-mode",
     "sec-fetch-site",
@@ -59,15 +61,17 @@ const SAFE_FORWARD_HEADERS: &[&str] = &[
     "dnt",
 ];
 
-// Headers safe to carry into rewritten HLS URLs. Conditional headers such as
-// If-None-Match are intentionally excluded because they describe the manifest
-// request and should not be copied to every media segment.
+// These can safely be carried into rewritten HLS child URLs. Conditional
+// headers describe the current request and should not be copied to every
+// segment. Range is also intentionally request-specific.
 const SAFE_PROPAGATED_HEADERS: &[&str] = &[
     "accept",
     "accept-language",
     "cache-control",
     "pragma",
     "user-agent",
+    "origin",
+    "referer",
     "sec-fetch-dest",
     "sec-fetch-mode",
     "sec-fetch-site",
@@ -259,8 +263,8 @@ fn build_upstream_headers(
 ) -> Result<HeaderMap, String> {
     let mut out = HeaderMap::new();
 
-    // Preserve the useful browser/media request headers from the original
-    // client request. Only this explicit allowlist is copied automatically.
+    // Copy useful browser/media headers from the request that reached the
+    // proxy. This includes Origin and Referer without requiring query params.
     for name in SAFE_FORWARD_HEADERS {
         if let Some(value) = request_headers.get(*name) {
             let header_name = HeaderName::from_bytes(name.as_bytes())
@@ -269,7 +273,7 @@ fn build_upstream_headers(
         }
     }
 
-    // Fall back to the configured UA only when the client did not send one.
+    // Fall back to the configured UA only when the incoming request has none.
     if !out.contains_key("user-agent") {
         out.insert(
             "user-agent",
@@ -277,8 +281,8 @@ fn build_upstream_headers(
         );
     }
 
-    // Explicit JSON headers remain supported and override automatically
-    // copied safe headers where the same name is supplied.
+    // Existing JSON headers remain supported. Explicit values override the
+    // automatically copied safe headers when names collide.
     if let Some(raw) = query.get("headers") {
         if raw.len() > cfg.max_header_json_length {
             return Err("headers parameter is too large".into());
@@ -295,7 +299,7 @@ fn build_upstream_headers(
         }
     }
 
-    // Explicit query parameters are authoritative for Origin and Referer.
+    // Query parameters remain authoritative for these two common HLS headers.
     for name in ["referer", "origin"] {
         if let Some(value) = query.get(name) {
             if value.len() <= 4096 {
@@ -304,8 +308,7 @@ fn build_upstream_headers(
         }
     }
 
-    // Range belongs to the current media request and must not be persisted in
-    // rewritten playlist URLs.
+    // Range belongs only to the current media request.
     if let Some(range) = request_headers.get("range") {
         out.insert("range", range.clone());
     }
@@ -500,9 +503,9 @@ fn propagated_headers_query(
 ) -> Result<String, String> {
     let mut headers = serde_json::Map::new();
 
-    // Preserve the existing explicit `headers=` behaviour. This means custom
-    // per-stream headers such as Cookie/Authorization continue to propagate to
-    // child resources exactly as before.
+    // Preserve the existing explicit headers= behaviour. Custom credentials
+    // supplied intentionally by the caller continue to propagate to child
+    // resources exactly as before.
     if let Some(raw) = query.get("headers") {
         let value: Value =
             serde_json::from_str(raw).map_err(|_| "headers must be valid JSON")?;
@@ -516,20 +519,12 @@ fn propagated_headers_query(
         }
     }
 
-    // Automatically propagated request headers use a separate safe allowlist.
-    // Do not propagate conditional/cache validators or Range into every child.
+    // Automatically forwarded browser headers use a separate safe allowlist.
     for name in SAFE_PROPAGATED_HEADERS {
         if let Some(value) = upstream_headers.get(*name) {
             if let Ok(value) = value.to_str() {
                 headers.insert((*name).to_string(), Value::String(value.to_string()));
             }
-        }
-    }
-
-    // Origin/Referer are explicit and always propagate when supplied.
-    for name in ["referer", "origin"] {
-        if let Some(v) = query.get(name) {
-            headers.insert(name.to_string(), Value::String(v.clone()));
         }
     }
 
@@ -607,7 +602,6 @@ async fn validate_upstream(url: &Url) -> Result<(), String> {
 
     for addr in addrs {
         found = true;
-
         if private_ip(addr.ip()) {
             return Err("upstream host resolves to a private or special-use address".into());
         }
